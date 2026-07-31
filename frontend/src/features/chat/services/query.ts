@@ -1,5 +1,5 @@
 import { BaseService } from '@/services/base-service';
-import { QueryRequest, QueryResponse } from '@/types/api';
+import { ConversationMessage, QueryRequest, QueryResponse } from '@/types/api';
 
 export class QueryService extends BaseService {
   private static instance: QueryService;
@@ -18,9 +18,11 @@ export class QueryService extends BaseService {
   /**
    * Queries the active ingested repository.
    * @param question The question regarding the codebase.
+   * @param history Prior conversation turns, most recent last, so the
+   *   assistant can resolve references like "it" in the new question.
    */
-  public async queryRepository(question: string): Promise<QueryResponse> {
-    const payload: QueryRequest = { question };
+  public async queryRepository(question: string, history: ConversationMessage[] = []): Promise<QueryResponse> {
+    const payload: QueryRequest = { question, history };
     return this.post<QueryResponse>('/query', payload);
   }
 }

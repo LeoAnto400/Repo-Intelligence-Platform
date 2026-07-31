@@ -16,6 +16,7 @@ class AgentState(TypedDict):
     Runtime state for the first non-LangGraph orchestrator workflow.
     """
     question: str
+    history: List[Dict[str, Any]]
     retrieval_results: List[Dict[str, Any]]
     analysis_result: Optional[Dict[str, Any]]
     error: Optional[str]
@@ -49,12 +50,20 @@ class Orchestrator(BaseAgent):
         graph.add_edge("analyze", END)
         return graph.compile()
 
-    async def process(self, question: str) -> OrchestratorResult:
+    async def process(
+        self, question: str, history: Optional[List[Dict[str, Any]]] = None
+    ) -> OrchestratorResult:
         """
         Run retrieval followed by analysis for a user question.
+
+        Args:
+            question: The user's latest question.
+            history: Prior conversation turns, most recent last, forwarded to
+                the analysis step only (retrieval is unaffected).
         """
         state: AgentState = {
             "question": question,
+            "history": history or [],
             "retrieval_results": [],
             "analysis_result": None,
             "error": None,
@@ -97,7 +106,9 @@ class Orchestrator(BaseAgent):
             retrieved_chunks=len(retrieval_results),
         )
 
-    async def stream(self, question: str) -> AsyncIterator[Dict[str, Any]]:
+    async def stream(
+        self, question: str, history: Optional[List[Dict[str, Any]]] = None
+    ) -> AsyncIterator[Dict[str, Any]]:
         """
         Streaming counterpart to :meth:`process`. Runs retrieval up front
         (it has no incremental output), then streams the analysis answer
@@ -107,6 +118,11 @@ class Orchestrator(BaseAgent):
         Yields a ``retrieval`` event with the retrieved chunk count, followed
         by the ``token``/``done`` events produced by
         ``AnalysisAgent.stream_analysis``.
+
+        Args:
+            question: The user's latest question.
+            history: Prior conversation turns, most recent last, forwarded to
+                the analysis step only (retrieval is unaffected).
         """
         if not question or not isinstance(question, str) or not question.strip():
             logger.error("Orchestrator received an empty or invalid question.")
@@ -123,7 +139,7 @@ class Orchestrator(BaseAgent):
         retrieval_results = retrieval_response.get("results") or []
         yield {"type": "retrieval", "retrieved_chunks": len(retrieval_results)}
 
-        async for event in self.analysis_agent.stream_analysis(normalized_question, retrieval_results):
+        async for event in self.analysis_agent.stream_analysis(normalized_question, retrieval_results, history):
             yield event
 
     async def retrieval_node(self, state: AgentState) -> Dict[str, Any]:
@@ -164,11 +180,13 @@ class Orchestrator(BaseAgent):
     async def analysis_node(self, state: AgentState) -> Dict[str, Any]:
         question = state.get("question", "")
         retrieval_results = state.get("retrieval_results") or []
+        history = state.get("history") or []
 
         try:
             analysis_response = await self.analysis_agent.process({
                 "question": question,
                 "retrieval_results": retrieval_results,
+                "history": history,
             })
         except Exception as e:
             state["error"] = f"Analysis agent failed: {e}"

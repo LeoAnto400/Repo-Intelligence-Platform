@@ -99,6 +99,7 @@ class TestOrchestrator(unittest.IsolatedAsyncioTestCase):
         self.analysis_agent.process.assert_awaited_once_with({
             "question": "How does auth work?",
             "retrieval_results": retrieval_results,
+            "history": [],
         })
         self.assertEqual(self.orchestrator.last_state["analysis_result"], analysis_result)
 
@@ -146,11 +147,38 @@ class TestOrchestrator(unittest.IsolatedAsyncioTestCase):
         self.analysis_agent.process.assert_awaited_once_with({
             "question": "How does auth work?",
             "retrieval_results": retrieval_results,
+            "history": [],
         })
         self.assertEqual(self.orchestrator.last_state["question"], "How does auth work?")
         self.assertEqual(self.orchestrator.last_state["retrieval_results"], retrieval_results)
         self.assertEqual(self.orchestrator.last_state["analysis_result"]["answer"], result.answer)
         self.assertIsNone(self.orchestrator.last_state["error"])
+
+    async def test_process_forwards_history_to_analysis_agent_only(self):
+        retrieval_results = [{"chunk_id": "chunk-1", "content": "code"}]
+        history = [
+            {"role": "user", "content": "What does this repo do?"},
+            {"role": "assistant", "content": "It's a FastAPI backend."},
+        ]
+        self.retrieval_agent.process.return_value = {
+            "results": retrieval_results,
+            "error": None,
+        }
+        self.analysis_agent.process.return_value = {
+            "answer": "It uses login routes.",
+            "source_files": [],
+            "chunk_count": 1,
+            "error": None,
+        }
+
+        await self.orchestrator.process("What about login?", history=history)
+
+        self.retrieval_agent.process.assert_awaited_once_with({"query": "What about login?"})
+        self.analysis_agent.process.assert_awaited_once_with({
+            "question": "What about login?",
+            "retrieval_results": retrieval_results,
+            "history": history,
+        })
 
     async def test_complete_graph_execution_runs_retrieve_then_analyze(self):
         calls = []
@@ -181,6 +209,7 @@ class TestOrchestrator(unittest.IsolatedAsyncioTestCase):
             ("analyze", {
                 "question": "What is indexed?",
                 "retrieval_results": retrieval_results,
+                "history": [],
             }),
         ])
 
@@ -273,9 +302,10 @@ class TestOrchestrator(unittest.IsolatedAsyncioTestCase):
             "error": None,
         }
 
-        async def fake_stream_analysis(question, results):
+        async def fake_stream_analysis(question, results, history=None):
             self.assertEqual(question, "Where is login?")
             self.assertEqual(results, retrieval_results)
+            self.assertIsNone(history)
             yield {"type": "token", "text": "Login "}
             yield {"type": "token", "text": "is in auth.py."}
             yield {
@@ -294,6 +324,24 @@ class TestOrchestrator(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[2], {"type": "token", "text": "is in auth.py."})
         self.assertEqual(events[3]["answer"], "Login is in auth.py.")
         self.retrieval_agent.process.assert_awaited_once_with({"query": "Where is login?"})
+
+    async def test_stream_forwards_history_to_analysis_agent(self):
+        retrieval_results = [{"chunk_id": "chunk-1", "content": "code"}]
+        history = [{"role": "user", "content": "What does this repo do?"}]
+        self.retrieval_agent.process.return_value = {
+            "results": retrieval_results,
+            "error": None,
+        }
+
+        async def fake_stream_analysis(question, results, history=None):
+            self.assertEqual(history, [{"role": "user", "content": "What does this repo do?"}])
+            yield {"type": "done", "answer": "Login is in auth.py.", "source_files": [], "chunk_count": 1}
+
+        self.analysis_agent.stream_analysis = fake_stream_analysis
+
+        events = [event async for event in self.orchestrator.stream("Where is login?", history=history)]
+
+        self.assertEqual(events[-1]["answer"], "Login is in auth.py.")
 
     async def test_stream_rejects_empty_question(self):
         with self.assertRaises(ValueError):

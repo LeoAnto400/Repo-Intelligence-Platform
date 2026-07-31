@@ -65,6 +65,25 @@ def enforce_query_rate_limit(request: Request) -> None:
         )
 
 
+def _normalize_history(raw: Any) -> List[Dict[str, str]]:
+    """Sanitizes a client-supplied conversation history (REST body or raw
+    websocket JSON) into a plain ``[{"role": ..., "content": ...}]`` list,
+    dropping anything malformed rather than rejecting the whole request."""
+    if not isinstance(raw, list):
+        return []
+
+    normalized: List[Dict[str, str]] = []
+    for turn in raw:
+        if not isinstance(turn, dict):
+            continue
+        role = turn.get("role")
+        content = turn.get("content")
+        if not isinstance(role, str) or not isinstance(content, str) or not content.strip():
+            continue
+        normalized.append({"role": role, "content": content})
+    return normalized
+
+
 class _TaggedLogAdapter(logging.LoggerAdapter):
     """Prefixes every log line with a short request-correlation tag, e.g.
     ``[ingest:3f9a2c1d]``, so every step of a single request can be grepped
@@ -551,7 +570,8 @@ async def query_repository(
     request_start = time.perf_counter()
 
     question = payload.question.strip() if payload.question else ""
-    log.info("Query start: question=%r", question)
+    history = [{"role": turn.role, "content": turn.content} for turn in payload.history]
+    log.info("Query start: question=%r history_length=%d", question, len(history))
 
     if not question:
         log.error("Query rejected because question was empty")
@@ -561,7 +581,7 @@ async def query_repository(
         )
 
     try:
-        result = await orchestrator.process(question)
+        result = await orchestrator.process(question, history=history)
     except ValueError as e:
         log.exception("Invalid query request")
         raise HTTPException(
@@ -614,6 +634,7 @@ async def query_repository_ws(
         while True:
             payload = await websocket.receive_json()
             question = (payload.get("question") or "").strip() if isinstance(payload, dict) else ""
+            history = _normalize_history(payload.get("history") if isinstance(payload, dict) else None)
 
             if not question:
                 await websocket.send_json({"type": "error", "detail": "Question cannot be empty."})
@@ -626,10 +647,10 @@ async def query_repository_ws(
             query_id = uuid.uuid4().hex[:8]
             log = _TaggedLogAdapter(logger, {"tag": f"query-ws:{query_id}"})
             request_start = time.perf_counter()
-            log.info("Query start: question=%r", question)
+            log.info("Query start: question=%r history_length=%d", question, len(history))
 
             try:
-                async for event in orchestrator.stream(question):
+                async for event in orchestrator.stream(question, history=history):
                     await websocket.send_json(event)
                 log.info("Query complete: total_time=%.2fs", time.perf_counter() - request_start)
             except (ValueError, RuntimeError) as e:

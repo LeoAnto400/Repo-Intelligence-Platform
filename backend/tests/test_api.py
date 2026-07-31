@@ -184,7 +184,36 @@ class TestApi(unittest.TestCase):
             "source_files": ["src/auth.py"],
             "retrieved_chunks": 2,
         })
-        orchestrator.process.assert_awaited_once_with("How does auth work?")
+        orchestrator.process.assert_awaited_once_with("How does auth work?", history=[])
+
+    def test_query_endpoint_forwards_conversation_history(self):
+        orchestrator = MagicMock()
+        orchestrator.process = AsyncMock(return_value=OrchestratorResult(
+            answer="It also validates the session.",
+            source_files=[],
+            retrieved_chunks=0,
+        ))
+        app.dependency_overrides[routes.get_orchestrator] = lambda: orchestrator
+
+        response = self.client.post(
+            "/api/v1/query",
+            json={
+                "question": "What else does it do?",
+                "history": [
+                    {"role": "user", "content": "How does auth work?"},
+                    {"role": "assistant", "content": "It validates tokens."},
+                ],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        orchestrator.process.assert_awaited_once_with(
+            "What else does it do?",
+            history=[
+                {"role": "user", "content": "How does auth work?"},
+                {"role": "assistant", "content": "It validates tokens."},
+            ],
+        )
 
     def test_query_endpoint_rejects_empty_question(self):
         response = self.client.post(
@@ -252,8 +281,11 @@ class TestApi(unittest.TestCase):
         self.assertEqual(routes.get_active_repository_context(), {"repository": "other-repo"})
 
     def test_query_websocket_streams_events(self):
+        received_history = []
+
         class FakeOrchestrator:
-            async def stream(self, question):
+            async def stream(self, question, history=None):
+                received_history.append(history)
                 yield {"type": "retrieval", "retrieved_chunks": 1}
                 yield {"type": "token", "text": "Auth "}
                 yield {"type": "token", "text": "uses login."}
@@ -267,7 +299,10 @@ class TestApi(unittest.TestCase):
         app.dependency_overrides[routes.get_orchestrator] = lambda: FakeOrchestrator()
 
         with self.client.websocket_connect("/api/v1/ws/query") as websocket:
-            websocket.send_json({"question": "How does auth work?"})
+            websocket.send_json({
+                "question": "How does auth work?",
+                "history": [{"role": "user", "content": "What does this repo do?"}],
+            })
             events = [websocket.receive_json() for _ in range(4)]
 
         self.assertEqual(events[0], {"type": "retrieval", "retrieved_chunks": 1})
@@ -279,6 +314,32 @@ class TestApi(unittest.TestCase):
             "source_files": ["src/auth.py"],
             "chunk_count": 1,
         })
+        self.assertEqual(received_history, [[{"role": "user", "content": "What does this repo do?"}]])
+
+    def test_query_websocket_drops_malformed_history_entries(self):
+        received_history = []
+
+        class FakeOrchestrator:
+            async def stream(self, question, history=None):
+                received_history.append(history)
+                yield {"type": "done", "answer": "ok", "source_files": [], "chunk_count": 0}
+
+        app.dependency_overrides[routes.get_orchestrator] = lambda: FakeOrchestrator()
+
+        with self.client.websocket_connect("/api/v1/ws/query") as websocket:
+            websocket.send_json({
+                "question": "How does auth work?",
+                "history": [
+                    {"role": "user", "content": "Valid turn"},
+                    {"role": "user", "content": "   "},
+                    {"content": "missing role"},
+                    "not-a-dict",
+                    {"role": "assistant"},
+                ],
+            })
+            websocket.receive_json()
+
+        self.assertEqual(received_history, [[{"role": "user", "content": "Valid turn"}]])
 
     def test_query_websocket_rejects_empty_question(self):
         app.dependency_overrides[routes.get_orchestrator] = lambda: MagicMock()
@@ -291,7 +352,7 @@ class TestApi(unittest.TestCase):
 
     def test_query_websocket_reports_orchestrator_failure(self):
         class FailingOrchestrator:
-            async def stream(self, question):
+            async def stream(self, question, history=None):
                 raise RuntimeError("Retrieval failed")
                 yield  # pragma: no cover - makes this an async generator
 

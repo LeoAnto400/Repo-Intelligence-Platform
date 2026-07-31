@@ -25,7 +25,7 @@ describe('useChatStore', () => {
       if (assistant) contentSnapshots.push(assistant.content);
     });
 
-    vi.mocked(queryStreamClient.query).mockImplementation(async (_question, handlers) => {
+    vi.mocked(queryStreamClient.query).mockImplementation(async (_question, _history, handlers) => {
       handlers.onToken('Auth ');
       handlers.onToken('uses JWT.');
       return { answer: 'Auth uses JWT tokens.', sourceFiles: ['src/auth.py'], retrievedChunks: 2 };
@@ -51,6 +51,86 @@ describe('useChatStore', () => {
     expect(queryService.queryRepository).not.toHaveBeenCalled();
   });
 
+  it('sends no history for the first question in a fresh conversation', async () => {
+    vi.mocked(queryStreamClient.query).mockResolvedValue({ answer: 'Answer.', sourceFiles: [], retrievedChunks: 0 });
+
+    await useChatStore.getState().sendMessage('What does this repo do?');
+
+    expect(queryStreamClient.query).toHaveBeenCalledWith('What does this repo do?', [], expect.anything());
+  });
+
+  it('sends prior completed turns as history on a follow-up question', async () => {
+    vi.mocked(queryStreamClient.query).mockResolvedValue({
+      answer: "It's a FastAPI backend.",
+      sourceFiles: [],
+      retrievedChunks: 0,
+    });
+    await useChatStore.getState().sendMessage('What does this repo do?');
+    vi.mocked(queryStreamClient.query).mockClear();
+
+    vi.mocked(queryStreamClient.query).mockResolvedValue({ answer: 'It uses JWT.', sourceFiles: [], retrievedChunks: 0 });
+    await useChatStore.getState().sendMessage('How does it handle auth?');
+
+    expect(queryStreamClient.query).toHaveBeenCalledWith(
+      'How does it handle auth?',
+      [
+        { role: 'user', content: 'What does this repo do?' },
+        { role: 'assistant', content: "It's a FastAPI backend." },
+      ],
+      expect.anything()
+    );
+  });
+
+  it('excludes pending and errored messages from the history payload', async () => {
+    useChatStore.setState({
+      messages: [
+        { id: '1', role: 'user', content: 'First question', timestamp: new Date(), status: 'complete' },
+        { id: '2', role: 'assistant', content: '', timestamp: new Date(), status: 'error' },
+      ],
+      isLoading: false,
+    });
+    vi.mocked(queryStreamClient.query).mockResolvedValue({ answer: 'Answer.', sourceFiles: [], retrievedChunks: 0 });
+
+    await useChatStore.getState().sendMessage('Second question');
+
+    expect(queryStreamClient.query).toHaveBeenCalledWith(
+      'Second question',
+      [{ role: 'user', content: 'First question' }],
+      expect.anything()
+    );
+  });
+
+  it('retryMessage sends history from before the failed question, not including it', async () => {
+    useChatStore.setState({
+      messages: [
+        { id: '1', role: 'user', content: 'What does this repo do?', timestamp: new Date(), status: 'complete' },
+        { id: '2', role: 'assistant', content: "It's a FastAPI backend.", timestamp: new Date(), status: 'complete' },
+        { id: '3', role: 'user', content: 'How does auth work?', timestamp: new Date(), status: 'complete' },
+        {
+          id: '4',
+          role: 'assistant',
+          content: 'Network down',
+          timestamp: new Date(),
+          status: 'error',
+          question: 'How does auth work?',
+        },
+      ],
+      isLoading: false,
+    });
+    vi.mocked(queryStreamClient.query).mockResolvedValue({ answer: 'It uses JWT.', sourceFiles: [], retrievedChunks: 0 });
+
+    await useChatStore.getState().retryMessage('4');
+
+    expect(queryStreamClient.query).toHaveBeenCalledWith(
+      'How does auth work?',
+      [
+        { role: 'user', content: 'What does this repo do?' },
+        { role: 'assistant', content: "It's a FastAPI backend." },
+      ],
+      expect.anything()
+    );
+  });
+
   it('falls back to the REST endpoint when the websocket stream fails', async () => {
     vi.mocked(queryStreamClient.query).mockRejectedValue(new Error('Failed to connect to the assistant.'));
     vi.mocked(queryService.queryRepository).mockResolvedValue({
@@ -69,7 +149,7 @@ describe('useChatStore', () => {
       sourceFiles: ['src/auth.py'],
       retrievedChunks: 2,
     });
-    expect(queryService.queryRepository).toHaveBeenCalledWith('How does auth work?');
+    expect(queryService.queryRepository).toHaveBeenCalledWith('How does auth work?', []);
   });
 
   it('marks the assistant message as errored when both the stream and the REST fallback fail', async () => {
@@ -103,7 +183,7 @@ describe('useChatStore', () => {
     await useChatStore.getState().sendMessage('Second question while loading');
 
     expect(queryStreamClient.query).toHaveBeenCalledTimes(1);
-    expect(queryStreamClient.query).toHaveBeenCalledWith('First question', expect.anything());
+    expect(queryStreamClient.query).toHaveBeenCalledWith('First question', [], expect.anything());
 
     resolveQuery({ answer: 'Answer', sourceFiles: [], retrievedChunks: 0 });
     await firstSend;

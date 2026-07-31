@@ -72,12 +72,12 @@ describe('QueryStreamClient', () => {
     const client = await loadClient();
     const onToken = vi.fn();
 
-    const resultPromise = client.query('How does auth work?', { onToken });
+    const resultPromise = client.query('How does auth work?', [], { onToken });
     const socket = FakeWebSocket.instances[0];
     socket.triggerOpen();
     await flush();
 
-    expect(socket.sent).toEqual([JSON.stringify({ question: 'How does auth work?' })]);
+    expect(socket.sent).toEqual([JSON.stringify({ question: 'How does auth work?', history: [] })]);
 
     socket.triggerMessage({ type: 'retrieval', retrieved_chunks: 2 });
     socket.triggerMessage({ type: 'token', text: 'Auth ' });
@@ -99,16 +99,34 @@ describe('QueryStreamClient', () => {
     });
   });
 
+  it('sends the provided conversation history alongside the question', async () => {
+    const client = await loadClient();
+    const history = [
+      { role: 'user' as const, content: 'What does this repo do?' },
+      { role: 'assistant' as const, content: "It's a FastAPI backend." },
+    ];
+
+    const resultPromise = client.query('How does auth work?', history, { onToken: vi.fn() });
+    const socket = FakeWebSocket.instances[0];
+    socket.triggerOpen();
+    await flush();
+
+    expect(socket.sent).toEqual([JSON.stringify({ question: 'How does auth work?', history })]);
+
+    socket.triggerMessage({ type: 'done', answer: 'It uses JWT.', source_files: [], chunk_count: 0 });
+    await resultPromise;
+  });
+
   it('reuses an already-open socket for a second query', async () => {
     const client = await loadClient();
 
-    const first = client.query('First question', { onToken: vi.fn() });
+    const first = client.query('First question', [], { onToken: vi.fn() });
     FakeWebSocket.instances[0].triggerOpen();
     await flush();
     FakeWebSocket.instances[0].triggerMessage({ type: 'done', answer: 'a', source_files: [], chunk_count: 0 });
     await first;
 
-    const second = client.query('Second question', { onToken: vi.fn() });
+    const second = client.query('Second question', [], { onToken: vi.fn() });
     await flush();
     expect(FakeWebSocket.instances).toHaveLength(1);
     FakeWebSocket.instances[0].triggerMessage({ type: 'done', answer: 'b', source_files: [], chunk_count: 0 });
@@ -117,7 +135,7 @@ describe('QueryStreamClient', () => {
 
   it('rejects with the detail from an error event', async () => {
     const client = await loadClient();
-    const resultPromise = client.query('Broken question', { onToken: vi.fn() });
+    const resultPromise = client.query('Broken question', [], { onToken: vi.fn() });
     const socket = FakeWebSocket.instances[0];
     socket.triggerOpen();
     await flush();
@@ -129,7 +147,7 @@ describe('QueryStreamClient', () => {
 
   it('rejects when the socket closes before a done/error event', async () => {
     const client = await loadClient();
-    const resultPromise = client.query('Dropped question', { onToken: vi.fn() });
+    const resultPromise = client.query('Dropped question', [], { onToken: vi.fn() });
     const socket = FakeWebSocket.instances[0];
     socket.triggerOpen();
     await flush();
@@ -141,7 +159,7 @@ describe('QueryStreamClient', () => {
 
   it('rejects when the socket errors before opening', async () => {
     const client = await loadClient();
-    const resultPromise = client.query('Unreachable question', { onToken: vi.fn() });
+    const resultPromise = client.query('Unreachable question', [], { onToken: vi.fn() });
     const socket = FakeWebSocket.instances[0];
 
     socket.onerror?.();

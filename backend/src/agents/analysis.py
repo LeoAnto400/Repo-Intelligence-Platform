@@ -1,7 +1,7 @@
 import json
 import logging
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Dict, List
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 from src.agents.base import BaseAgent
 from src.agents.retrieval import RetrievalResult
@@ -31,6 +31,13 @@ class AnalysisAgent(BaseAgent):
     """
     AnalysisAgent generates natural language explanations from retrieved code chunks.
     """
+
+    # Conversation history is only used to help the model resolve references
+    # in the latest question (e.g. "it", "that function") - kept short so it
+    # doesn't crowd out the repository context, which remains the sole source
+    # of truth for the answer itself.
+    MAX_HISTORY_MESSAGES = 8
+    MAX_HISTORY_MESSAGE_CHARS = 1500
 
     def __init__(self, gemini_service: GeminiService):
         """
@@ -63,6 +70,7 @@ class AnalysisAgent(BaseAgent):
             raw_results = payload.get("retrieved_context")
         if raw_results is None:
             raw_results = payload.get("results")
+        history = payload.get("history")
 
         if not question or not isinstance(question, str) or not question.strip():
             logger.error("Missing or invalid question in analysis payload.")
@@ -84,7 +92,7 @@ class AnalysisAgent(BaseAgent):
 
         try:
             retrieval_results = self._normalize_retrieval_results(raw_results)
-            result = await self.generate_analysis(question.strip(), retrieval_results)
+            result = await self.generate_analysis(question.strip(), retrieval_results, history)
             return {**result.to_dict(), "error": None}
         except Exception as e:
             logger.exception("An exception occurred during analysis process execution")
@@ -98,7 +106,8 @@ class AnalysisAgent(BaseAgent):
     async def generate_analysis(
         self,
         question: str,
-        retrieval_results: List[RetrievalResult]
+        retrieval_results: List[RetrievalResult],
+        history: Optional[List[Dict[str, Any]]] = None,
     ) -> AnalysisResult:
         """
         Generate a natural language explanation from retrieved repository chunks.
@@ -106,6 +115,8 @@ class AnalysisAgent(BaseAgent):
         Args:
             question: Question asked by the user.
             retrieval_results: Retrieved code chunks to use as the only answer context.
+            history: Prior conversation turns (``{"role": ..., "content": ...}``),
+                most recent last, used only to resolve references in ``question``.
 
         Returns:
             AnalysisResult containing the answer and source summary.
@@ -116,7 +127,7 @@ class AnalysisAgent(BaseAgent):
         )
 
         context = self._build_context_block(retrieval_results)
-        prompt = self._build_prompt(question, context)
+        prompt = self._build_prompt(question, context, history)
         logger.debug("Calling GeminiService.generate_content for analysis.")
 
         answer = self.gemini_service.generate_content(prompt)
@@ -137,6 +148,7 @@ class AnalysisAgent(BaseAgent):
         self,
         question: str,
         retrieval_results: List[Any],
+        history: Optional[List[Dict[str, Any]]] = None,
     ) -> AsyncIterator[Dict[str, Any]]:
         """
         Streaming counterpart to :meth:`process`. Yields ``{"type": "token",
@@ -146,7 +158,7 @@ class AnalysisAgent(BaseAgent):
         """
         normalized = self._normalize_retrieval_results(retrieval_results)
         context = self._build_context_block(normalized)
-        prompt = self._build_prompt(question, context)
+        prompt = self._build_prompt(question, context, history)
         source_files = self._source_files(normalized)
 
         chunks: List[str] = []
@@ -229,16 +241,49 @@ class AnalysisAgent(BaseAgent):
 
         return "\n\n".join(context_blocks)
 
-    def _build_prompt(self, question: str, context: str) -> str:
+    def _build_prompt(
+        self,
+        question: str,
+        context: str,
+        history: Optional[List[Dict[str, Any]]] = None,
+    ) -> str:
+        history_block = self._build_history_block(history)
+        history_section = (
+            "Conversation so far (most recent last - refer to it only to resolve what "
+            f"the question below means, e.g. pronouns like \"it\"; the repository "
+            f"context above remains the only source of facts for the answer):\n"
+            f"{history_block}\n\n"
+            if history_block else ""
+        )
         return (
             "You are a senior software engineer.\n\n"
             "Answer the user's question using ONLY the provided repository context.\n\n"
             "If the answer cannot be determined from the context, say so.\n\n"
+            f"{history_section}"
             "Repository Context:\n"
             f"{context}\n\n"
             "Question:\n"
             f"{question}"
         )
+
+    def _build_history_block(self, history: Optional[List[Dict[str, Any]]]) -> str:
+        if not history:
+            return ""
+
+        lines: List[str] = []
+        for turn in history[-self.MAX_HISTORY_MESSAGES:]:
+            if not isinstance(turn, dict):
+                continue
+            content = turn.get("content")
+            if not isinstance(content, str) or not content.strip():
+                continue
+            content = content.strip()
+            if len(content) > self.MAX_HISTORY_MESSAGE_CHARS:
+                content = content[: self.MAX_HISTORY_MESSAGE_CHARS] + "..."
+            speaker = "Assistant" if turn.get("role") == "assistant" else "Developer"
+            lines.append(f"{speaker}: {content}")
+
+        return "\n".join(lines)
 
     def _source_files(self, retrieval_results: List[RetrievalResult]) -> List[str]:
         seen = set()

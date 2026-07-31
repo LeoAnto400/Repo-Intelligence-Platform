@@ -11,16 +11,12 @@ import {
   GitPullRequest,
   CircleAlert,
   FolderOpen,
-  Settings,
   Menu,
   X,
   PanelLeftClose,
   PanelLeft,
-  Database,
   Github,
-  Terminal,
   Search,
-  Bell,
   Sparkles
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -63,7 +59,7 @@ export default function DashboardShell({ children }: DashboardShellProps) {
               <Sparkles className="h-5 w-5 text-indigo-100" />
             </div>
             <span className="font-semibold text-base tracking-tight bg-gradient-to-r from-zinc-100 to-zinc-400 bg-clip-text text-transparent">
-              Antigravity AI
+              GitHub Assistant Platform
             </span>
           </div>
           <div className="flex items-center gap-4">
@@ -89,7 +85,7 @@ export default function DashboardShell({ children }: DashboardShellProps) {
 
         {/* Footer */}
         <footer className="border-t border-zinc-900/60 bg-zinc-950 p-6 text-center text-xs text-zinc-650">
-          © 2026 Antigravity AI. Powered by FastAPI, ChromaDB, and Gemini. All rights reserved.
+          © 2026 GitHub Assistant Platform. Powered by FastAPI, ChromaDB, and Gemini. All rights reserved.
         </footer>
       </div>
     );
@@ -102,10 +98,7 @@ export default function DashboardShell({ children }: DashboardShellProps) {
     { name: 'Pull Requests', icon: GitPullRequest, badge: 2 },
     { name: 'Issues', icon: CircleAlert },
     { name: 'File Explorer', icon: FolderOpen },
-    { name: 'Settings', icon: Settings, href: '/settings' },
   ];
-
-  const currentLabel = navItems.find((item) => item.href === pathname)?.name ?? activeItem;
 
   return (
     <div className="flex min-h-screen bg-zinc-950 text-zinc-100 font-sans antialiased selection:bg-indigo-500/30 selection:text-indigo-200">
@@ -146,7 +139,7 @@ export default function DashboardShell({ children }: DashboardShellProps) {
                   animate={{ opacity: 1, x: 0 }}
                   className="font-semibold text-sm tracking-tight bg-gradient-to-r from-zinc-100 to-zinc-400 bg-clip-text text-transparent whitespace-nowrap"
                 >
-                  Antigravity AI
+                  GitHub Assistant Platform
                 </motion.span>
               )}
             </div>
@@ -264,20 +257,7 @@ export default function DashboardShell({ children }: DashboardShellProps) {
             {!isCollapsed && (
               <div className="flex flex-col text-left overflow-hidden min-w-0">
                 <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Ingested Repository</span>
-                <span className="text-xs font-medium text-zinc-300 truncate">repo-intelligence-assistant</span>
-              </div>
-            )}
-          </div>
-
-          {/* User profile / System Node placeholder */}
-          <div className={cn("flex items-center", isCollapsed ? "justify-center" : "gap-3 px-2")}>
-            <div className="h-7 w-7 rounded-full bg-gradient-to-tr from-indigo-500 to-emerald-500 flex shrink-0 items-center justify-center text-xs font-bold text-white shadow-md shadow-black/40">
-              U
-            </div>
-            {!isCollapsed && (
-              <div className="flex flex-col text-left min-w-0">
-                <span className="text-xs font-medium text-zinc-300 truncate">Developer Admin</span>
-                <span className="text-[10px] text-zinc-500 truncate">admin@antigravity.ai</span>
+                <span className="text-xs font-medium text-zinc-300 truncate">{repository}</span>
               </div>
             )}
           </div>
@@ -301,12 +281,13 @@ export default function DashboardShell({ children }: DashboardShellProps) {
               <Menu className="h-5 w-5" />
             </Button>
 
-            <div className="flex items-center gap-2 text-sm text-zinc-400">
-              <span className="hover:text-zinc-200 cursor-pointer transition-colors">Workspace</span>
-              <span className="text-zinc-600">/</span>
-              <span className="hover:text-zinc-200 cursor-pointer transition-colors">repo-intelligence-assistance</span>
-              <span className="text-zinc-600">/</span>
-              <span className="text-zinc-200 font-medium">{currentLabel}</span>
+            <div className="flex items-center gap-2">
+              <div className="relative flex h-2 w-2 shrink-0">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+              </div>
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Ingested Repository</span>
+              <span className="text-sm font-medium text-zinc-100">{repository}</span>
             </div>
           </div>
 
@@ -326,21 +307,6 @@ export default function DashboardShell({ children }: DashboardShellProps) {
 
           {/* Right: Action Area */}
           <div className="flex items-center gap-2.5">
-            {/* Database indicator shortcut */}
-            <Button
-              variant="ghost"
-              size="sm"
-              className="hidden sm:flex items-center gap-2 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900 border border-zinc-800/40 rounded-lg px-2.5 h-8 text-xs"
-            >
-              <Database className="h-3.5 w-3.5 text-indigo-400" />
-              <span>FastAPI Online</span>
-            </Button>
-
-            {/* Notification button */}
-            <Button variant="ghost" size="icon" className="h-8 w-8 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900">
-              <Bell className="h-4.5 w-4.5" />
-            </Button>
-
             {/* GitHub connect status */}
             <a
               href="https://github.com"
@@ -350,11 +316,6 @@ export default function DashboardShell({ children }: DashboardShellProps) {
             >
               <Github className="h-4.5 w-4.5" />
             </a>
-
-            {/* Terminal toggle indicator */}
-            <Button variant="ghost" size="icon" className="h-8 w-8 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900">
-              <Terminal className="h-4.5 w-4.5 text-emerald-400" />
-            </Button>
           </div>
         </header>
 

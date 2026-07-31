@@ -219,6 +219,85 @@ class TestAnalysisAgent(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[-1]["answer"], "It prints hello.")
         self.assertEqual(events[-1]["source_files"], ["src/main.py"])
 
+    async def test_generate_analysis_includes_conversation_history_in_prompt(self):
+        self.mock_gemini_service.generate_content.return_value = "It also validates the session."
+        history = [
+            {"role": "user", "content": "How does authentication work?"},
+            {"role": "assistant", "content": "It validates tokens via authenticate()."},
+        ]
+
+        await self.agent.generate_analysis(
+            question="What else does it do?",
+            retrieval_results=[],
+            history=history,
+        )
+
+        prompt = self.mock_gemini_service.generate_content.call_args.args[0]
+        self.assertIn("Conversation so far", prompt)
+        self.assertIn("Developer: How does authentication work?", prompt)
+        self.assertIn("Assistant: It validates tokens via authenticate().", prompt)
+        self.assertIn("Question:\nWhat else does it do?", prompt)
+
+    async def test_generate_analysis_omits_history_section_when_no_history(self):
+        self.mock_gemini_service.generate_content.return_value = "Answer."
+
+        await self.agent.generate_analysis(
+            question="What does it do?", retrieval_results=[], history=None
+        )
+
+        prompt = self.mock_gemini_service.generate_content.call_args.args[0]
+        self.assertNotIn("Conversation so far", prompt)
+
+    async def test_generate_analysis_truncates_long_history_messages_and_caps_count(self):
+        self.mock_gemini_service.generate_content.return_value = "Answer."
+        long_message = "x" * 2000
+        history = [{"role": "user", "content": f"turn-{i}"} for i in range(20)]
+        history.append({"role": "user", "content": long_message})
+
+        await self.agent.generate_analysis(
+            question="What does it do?", retrieval_results=[], history=history
+        )
+
+        prompt = self.mock_gemini_service.generate_content.call_args.args[0]
+        # Only the most recent MAX_HISTORY_MESSAGES turns are included.
+        self.assertNotIn("turn-0", prompt)
+        self.assertIn(f"turn-{20 - AnalysisAgent.MAX_HISTORY_MESSAGES + 1}", prompt)
+        # Long messages are truncated rather than included in full.
+        self.assertIn("x" * AnalysisAgent.MAX_HISTORY_MESSAGE_CHARS + "...", prompt)
+        self.assertNotIn("x" * (AnalysisAgent.MAX_HISTORY_MESSAGE_CHARS + 1), prompt)
+
+    async def test_process_forwards_history_from_payload(self):
+        self.mock_gemini_service.generate_content.return_value = "It also validates the session."
+        payload = {
+            "question": "What else does it do?",
+            "retrieval_results": [],
+            "history": [{"role": "user", "content": "How does authentication work?"}],
+        }
+
+        response = await self.agent.process(payload)
+
+        self.assertIsNone(response["error"])
+        prompt = self.mock_gemini_service.generate_content.call_args.args[0]
+        self.assertIn("Developer: How does authentication work?", prompt)
+
+    async def test_stream_analysis_includes_conversation_history_in_prompt(self):
+        captured_prompt = {}
+
+        async def fake_stream(prompt):
+            captured_prompt["value"] = prompt
+            yield "Answer."
+
+        self.mock_gemini_service.generate_content_stream = fake_stream
+        history = [{"role": "assistant", "content": "It's a FastAPI backend."}]
+
+        events = [
+            event
+            async for event in self.agent.stream_analysis("What does it use for auth?", [], history=history)
+        ]
+
+        self.assertEqual(events[-1]["answer"], "Answer.")
+        self.assertIn("Assistant: It's a FastAPI backend.", captured_prompt["value"])
+
 
 if __name__ == "__main__":
     unittest.main()

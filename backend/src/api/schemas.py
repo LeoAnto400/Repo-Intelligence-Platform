@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 class IngestRequest(BaseModel):
     """Payload to request ingestion and indexing of a repository."""
@@ -14,9 +14,17 @@ class IngestResponse(BaseModel):
     chunks_created: int
     repo_url: Optional[str] = None
 
+class ConversationMessage(BaseModel):
+    """A single prior turn in the conversation, sent along with a new question
+    so the analysis step can resolve references like "it" or "that function"
+    instead of treating every question as the start of a new conversation."""
+    role: str
+    content: str
+
 class QueryRequest(BaseModel):
     """Payload to run a query against a previously ingested repository."""
     question: str
+    history: List[ConversationMessage] = Field(default_factory=list)
 
 class QueryResponse(BaseModel):
     """Response returned after processing a repository intelligence query."""

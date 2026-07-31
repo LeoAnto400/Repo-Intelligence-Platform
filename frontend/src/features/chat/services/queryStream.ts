@@ -1,4 +1,5 @@
 import { API_WS_BASE_URL } from '@/lib/api-client';
+import type { ConversationMessage } from '@/types/api';
 
 interface StreamHandlers {
   onToken: (text: string) => void;
@@ -67,7 +68,11 @@ class QueryStreamClient {
     return this.connecting;
   }
 
-  async query(question: string, handlers: StreamHandlers): Promise<StreamResult> {
+  async query(
+    question: string,
+    history: ConversationMessage[],
+    handlers: StreamHandlers
+  ): Promise<StreamResult> {
     const socket = await this.connect();
 
     return new Promise<StreamResult>((resolve, reject) => {
@@ -113,7 +118,7 @@ class QueryStreamClient {
 
       socket.addEventListener('message', handleMessage);
       socket.addEventListener('close', handleClose);
-      socket.send(JSON.stringify({ question }));
+      socket.send(JSON.stringify({ question, history }));
     });
   }
 }

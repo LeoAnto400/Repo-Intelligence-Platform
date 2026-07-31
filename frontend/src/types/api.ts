@@ -10,8 +10,14 @@ export interface IngestResponse {
   repo_url?: string;
 }
 
+export interface ConversationMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 export interface QueryRequest {
   question: string;
+  history?: ConversationMessage[];
 }
 
 export interface QueryResponse {
