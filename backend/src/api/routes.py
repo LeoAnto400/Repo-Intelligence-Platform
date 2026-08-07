@@ -1,8 +1,10 @@
+import json
 import logging
 import re
 import time
 import uuid
 from functools import lru_cache
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
@@ -161,6 +163,48 @@ def get_active_repository_context() -> Optional[Dict[str, Any]]:
     return _active_repository_context
 
 
+def _commits_store_dir() -> Path:
+    """Directory where each repository's commit history is persisted as a
+    JSON sidecar, so it survives past the in-memory active-repository-context
+    (which is lost on restart or when another repo is activated) without
+    needing a live GitHub API call every time a repo is reactivated."""
+    directory = Path(settings.CHROMA_DB_DIR).parent / "repo_commits"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def _commits_file(repository: str) -> Path:
+    safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", repository)
+    return _commits_store_dir() / f"{safe_name}.json"
+
+
+def save_commit_history(repository: str, commits: List[Dict[str, Any]]) -> None:
+    try:
+        _commits_file(repository).write_text(json.dumps(commits), encoding="utf-8")
+    except Exception:
+        logger.exception("Failed to persist commit history for %s", repository)
+
+
+def load_commit_history(repository: str) -> List[Dict[str, Any]]:
+    path = _commits_file(repository)
+    if not path.exists():
+        return []
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        logger.exception("Failed to load persisted commit history for %s", repository)
+        return []
+
+
+def delete_commit_history(repository: str) -> None:
+    path = _commits_file(repository)
+    try:
+        if path.exists():
+            path.unlink()
+    except Exception:
+        logger.exception("Failed to delete persisted commit history for %s", repository)
+
+
 @lru_cache(maxsize=1)
 def get_github_service() -> GitHubService:
     return GitHubService(token=settings.GITHUB_TOKEN)
@@ -243,10 +287,14 @@ async def ingest_repository(
 
     log.info("Ingestion start: repo_url=%s repository=%s", repo_url, repository)
 
-    # ── Step 1: Clone + scan the repository ──────────────────────────────
+    # ── Step 1: Clone + scan the repository (also captures commit history
+    # locally via `git log`, so the commits tab works without a live GitHub
+    # API call) ────────────────────────────────────────────────────────────
     step_start = time.perf_counter()
     try:
-        files = await run_in_threadpool(github_service.fetch_repo_files, repo_url)
+        files, local_commits = await run_in_threadpool(
+            github_service.fetch_repo_files_and_commits, repo_url
+        )
     except ValueError as e:
         log.exception("Invalid repository URL during ingestion")
         raise HTTPException(
@@ -327,19 +375,26 @@ async def ingest_repository(
         ) from e
     log.info("ChromaDB storage complete in %.2fs", time.perf_counter() - step_start)
 
-    # ── Step 5: Fetch repository metadata/commits/PRs for the dashboard ──
+    # ── Step 5: Fetch repository metadata/PRs for the dashboard from the
+    # GitHub API. This is now best-effort: commit history no longer depends
+    # on it (see local_commits from Step 1), so a GitHub API failure (rate
+    # limit, non-github.com host, network) no longer fails the whole
+    # ingestion — it only means stars/forks/description stay empty. ───────
     step_start = time.perf_counter()
     try:
         repository_context = await run_in_threadpool(
             github_service.fetch_repository_context, repo_url, files=files
         )
     except Exception as e:
-        log.exception("GitHub repository metadata fetch failed during ingestion")
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"GitHub repository metadata fetch failed: {e}",
-        ) from e
+        log.warning("GitHub repository metadata fetch failed, continuing with local data only: %s", e)
+        repository_context = {"metadata": {}, "files": files, "commits": [], "pull_requests": []}
     log.info("Repository metadata fetch complete in %.2fs", time.perf_counter() - step_start)
+
+    # Prefer commit history captured locally during clone/scan (Step 1) — it
+    # works for any git host and doesn't depend on a live GitHub API call.
+    if local_commits:
+        repository_context["commits"] = local_commits
+    await run_in_threadpool(save_commit_history, repository, repository_context.get("commits") or [])
 
     # ── Step 5.5: Generate an AI summary, detected technologies, and
     # suggested questions from the freshly ingested chunks ────────────────
@@ -450,6 +505,7 @@ async def delete_repository(
         set_active_repository_context(None)
         log.info("Cleared active repository after deletion: %s", repository)
 
+    delete_commit_history(repository)
     log.info("Repository deleted: %s", repository)
     return DeleteRepositoryResponse(repository=repository, status="deleted")
 
@@ -500,6 +556,14 @@ async def select_repository(
             log.warning(
                 "Metadata refresh failed for %s, activating with minimal context: %s", repo_url, e
             )
+
+    # Commit history captured locally at ingestion time (see save_commit_history
+    # in /ingest) is the reliable source here — it doesn't need a repo_url or a
+    # live GitHub call, so it also covers repositories ingested before that URL
+    # was recorded. Prefer it over whatever the live GitHub refresh above returned.
+    persisted_commits = await run_in_threadpool(load_commit_history, repository)
+    if persisted_commits:
+        context["commits"] = persisted_commits
 
     try:
         samples = await run_in_threadpool(vector_store.sample_documents, repository, 20)

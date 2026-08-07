@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -243,16 +244,20 @@ class GitHubService:
             "body": pr.body or "",
         }
 
-    def clone_repository(self, repo_url: str) -> str:
+    def clone_repository(self, repo_url: str, depth: int = 1) -> str:
         """
         Clones a GitHub repository from a URL into a temporary workspace within the project.
-        
+
         Args:
             repo_url: Full HTTP URL to the GitHub repository.
-            
+            depth: How many commits of history to fetch (``git clone --depth``).
+                Defaults to 1 (just the latest commit); callers that need local
+                commit history (see ``get_local_commit_history``) should pass a
+                larger value.
+
         Returns:
             The absolute local path to the cloned repository.
-            
+
         Raises:
             ValueError: If the repository URL is empty or invalid.
             RuntimeError: If cloning fails.
@@ -292,7 +297,7 @@ class GitHubService:
             # Execute git clone
             # Use --depth 1 to minimize download size and speed up ingestion
             subprocess.run(
-                ["git", "clone", "--depth", "1", clone_url, temp_dir],
+                ["git", "clone", "--depth", str(max(depth, 1)), clone_url, temp_dir],
                 check=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -340,35 +345,8 @@ class GitHubService:
             RuntimeError: If cloning or reading files fails.
         """
         temp_dir = self.clone_repository(repo_url)
-        results: List[Dict[str, Any]] = []
-
         try:
-            # Scan files inside temporary repository directory
-            temp_path = Path(temp_dir)
-            for root, dirs, files in os.walk(temp_dir):
-                # Filter out ignore directories in place to prevent visiting
-                dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
-
-                for file in files:
-                    file_path = Path(root) / file
-                    ext = file_path.suffix.lower()
-
-                    if ext in SUPPORTED_EXTENSIONS:
-                        lang = SUPPORTED_EXTENSIONS[ext]
-                        # Calculate path relative to the clone directory root
-                        rel_path = file_path.relative_to(temp_path).as_posix()
-                        
-                        try:
-                            # Read content; ignore decoding errors for non-UTF8/binary edge cases
-                            content = file_path.read_text(encoding="utf-8", errors="ignore")
-                            results.append({
-                                "path": rel_path,
-                                "language": lang,
-                                "content": content
-                            })
-                        except Exception as e:
-                            logger.warning("Failed to read file %s: %s", file_path, e)
-                            continue
+            return self._scan_files(temp_dir)
         finally:
             if os.path.exists(temp_dir):
                 try:
@@ -377,7 +355,136 @@ class GitHubService:
                 except Exception as cleanup_err:
                     logger.exception("Failed to clean up temporary directory %s after scanning", temp_dir)
 
+    def fetch_repo_files_and_commits(
+        self, repo_url: str, commit_limit: int = 50
+    ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """
+        Clones the repository once and returns both its scanned source files
+        and its recent commit history, extracted locally via ``git log``
+        (see ``get_local_commit_history``). Used by ingestion so the commits
+        tab has real data without depending on a live GitHub API call, which
+        needs a github.com URL, a good rate limit, and network access.
+        """
+        temp_dir = self.clone_repository(repo_url, depth=max(commit_limit, 1))
+        try:
+            files = self._scan_files(temp_dir)
+            try:
+                commits = self.get_local_commit_history(temp_dir, limit=commit_limit)
+            except Exception as e:
+                logger.warning("Failed to read local commit history for %s: %s", repo_url, e)
+                commits = []
+            return files, commits
+        finally:
+            if os.path.exists(temp_dir):
+                try:
+                    safe_rmtree(temp_dir)
+                    logger.info("Cleaned up temporary directory %s after file scanning", temp_dir)
+                except Exception:
+                    logger.exception("Failed to clean up temporary directory %s after scanning", temp_dir)
+
+    def _scan_files(self, temp_dir: str) -> List[Dict[str, Any]]:
+        """Walks a cloned repository directory and extracts supported source files."""
+        results: List[Dict[str, Any]] = []
+        temp_path = Path(temp_dir)
+        for root, dirs, files in os.walk(temp_dir):
+            # Filter out ignore directories in place to prevent visiting
+            dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
+
+            for file in files:
+                file_path = Path(root) / file
+                ext = file_path.suffix.lower()
+
+                if ext in SUPPORTED_EXTENSIONS:
+                    lang = SUPPORTED_EXTENSIONS[ext]
+                    # Calculate path relative to the clone directory root
+                    rel_path = file_path.relative_to(temp_path).as_posix()
+
+                    try:
+                        # Read content; ignore decoding errors for non-UTF8/binary edge cases
+                        content = file_path.read_text(encoding="utf-8", errors="ignore")
+                        results.append({
+                            "path": rel_path,
+                            "language": lang,
+                            "content": content
+                        })
+                    except Exception as e:
+                        logger.warning("Failed to read file %s: %s", file_path, e)
+                        continue
         return results
+
+    def get_local_commit_history(
+        self, repo_path: str, limit: int = 50, max_diff_chars: int = 6000
+    ) -> List[Dict[str, Any]]:
+        """
+        Extracts recent commit history (hash, author, date, message, diff
+        stats, and a truncated diff) directly from a local git clone via
+        ``git log``, instead of the GitHub API. Works for any git host and
+        needs no network access, GitHub token, or known ``repo_url``.
+        """
+        try:
+            branch_result = subprocess.run(
+                ["git", "-C", repo_path, "rev-parse", "--abbrev-ref", "HEAD"],
+                check=True, capture_output=True, text=True,
+            )
+            branch = branch_result.stdout.strip() or "HEAD"
+        except Exception:
+            branch = "HEAD"
+
+        record_start, field_sep, header_end = "\x02", "\x1f", "\x03"
+        fmt = f"{record_start}%H{field_sep}%an{field_sep}%aI{field_sep}%B{header_end}"
+        try:
+            result = subprocess.run(
+                ["git", "-C", repo_path, "log", f"-n{max(limit, 1)}", "-p", "--shortstat", f"--pretty=format:{fmt}"],
+                check=True, capture_output=True, text=True, errors="ignore",
+            )
+        except subprocess.CalledProcessError as e:
+            logger.warning("`git log` failed for %s: %s", repo_path, e.stderr)
+            return []
+
+        stat_pattern = re.compile(
+            r"(\d+) files? changed(?:, (\d+) insertions?\(\+\))?(?:, (\d+) deletions?\(-\))?"
+        )
+
+        commits: List[Dict[str, Any]] = []
+        for record in result.stdout.split(record_start):
+            if header_end not in record:
+                continue
+            header, _, rest = record.partition(header_end)
+            fields = header.split(field_sep)
+            if len(fields) < 4:
+                continue
+            commit_hash, author, date, message = fields[0], fields[1], fields[2], fields[3]
+
+            # git emits the `--shortstat` summary line right after the commit
+            # message and *before* the `-p` patch body, e.g.:
+            #   <message>\n 1 file changed, 1 insertion(+), 1 deletion(-)\n\ndiff --git ...
+            stat_match = stat_pattern.search(rest)
+            if stat_match:
+                files_changed = int(stat_match.group(1) or 0)
+                additions = int(stat_match.group(2) or 0)
+                deletions = int(stat_match.group(3) or 0)
+                diff_text = rest[stat_match.end():]
+            else:
+                files_changed = additions = deletions = 0
+                diff_text = rest
+
+            diff_text = diff_text.strip()
+            if len(diff_text) > max_diff_chars:
+                diff_text = diff_text[:max_diff_chars] + "\n... (diff truncated)"
+
+            commits.append({
+                "hash": commit_hash,
+                "author": author.strip() or "unknown",
+                "message": message.strip(),
+                "time": date.strip(),
+                "branch": branch,
+                "filesChanged": files_changed,
+                "additions": additions,
+                "deletions": deletions,
+                "diff": diff_text,
+            })
+
+        return commits
 
     def chunk_file_content(self, file_content: str, chunk_size: int = 1000, chunk_overlap: int = 200) -> List[str]:
         """

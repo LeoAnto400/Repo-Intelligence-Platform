@@ -40,13 +40,14 @@ class TestApi(unittest.TestCase):
 
     def test_ingest_endpoint_success(self):
         github_service = MagicMock()
-        github_service.fetch_repo_files.return_value = [
+        files = [
             {
                 "path": "src/auth.py",
                 "content": "def login():\n    return True",
                 "language": "Python",
             }
         ]
+        github_service.fetch_repo_files_and_commits.return_value = (files, [])
         github_service.fetch_repository_context.return_value = {
             "metadata": {
                 "name": "demo",
@@ -61,7 +62,7 @@ class TestApi(unittest.TestCase):
                 "visibility": "public",
                 "contributors": [],
             },
-            "files": github_service.fetch_repo_files.return_value,
+            "files": files,
             "commits": [],
             "pull_requests": [],
         }
@@ -96,10 +97,10 @@ class TestApi(unittest.TestCase):
             "chunks_created": 1,
             "repo_url": "https://github.com/example/demo",
         })
-        github_service.fetch_repo_files.assert_called_once_with("https://github.com/example/demo")
+        github_service.fetch_repo_files_and_commits.assert_called_once_with("https://github.com/example/demo")
         github_service.fetch_repository_context.assert_called_once_with(
             "https://github.com/example/demo",
-            files=github_service.fetch_repo_files.return_value,
+            files=files,
         )
         gemini_service.generate_embeddings_batch.assert_called_once_with([
             "def login():\n    return True"
@@ -130,13 +131,16 @@ class TestApi(unittest.TestCase):
 
     def test_ingest_endpoint_reports_embedding_failure(self):
         github_service = MagicMock()
-        github_service.fetch_repo_files.return_value = [
-            {
-                "path": "src/auth.py",
-                "content": "def login(): pass",
-                "language": "Python",
-            }
-        ]
+        github_service.fetch_repo_files_and_commits.return_value = (
+            [
+                {
+                    "path": "src/auth.py",
+                    "content": "def login(): pass",
+                    "language": "Python",
+                }
+            ],
+            [],
+        )
         chunker = MagicMock()
         chunker.chunk_file.return_value = [
             Chunk(
