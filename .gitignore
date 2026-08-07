@@ -38,3 +38,5 @@ chroma_db/
 .env
 .claude
 start-app.bat
+
+interview-prep/
