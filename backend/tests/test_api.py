@@ -403,6 +403,56 @@ class TestApi(unittest.TestCase):
 
         self.assertEqual(event, {"type": "error", "detail": routes._QUERY_RATE_LIMIT_MESSAGE})
 
+    def test_summarize_pull_request_success(self):
+        routes._active_repository = "demo"
+        routes._active_repository_context = {
+            "repository": "demo",
+            "pull_requests": [
+                {"number": 42, "title": "Add dark mode", "author": "octocat", "status": "open", "labels": [], "body": "Adds a dark theme toggle."},
+            ],
+        }
+        analysis_agent = MagicMock()
+        analysis_agent.generate_pr_summary = AsyncMock(return_value="Adds a dark mode toggle to settings.")
+        app.dependency_overrides[routes.get_analysis_agent] = lambda: analysis_agent
+
+        response = self.client.post("/api/v1/pull-requests/42/summary")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"number": 42, "summary": "Adds a dark mode toggle to settings."})
+        analysis_agent.generate_pr_summary.assert_awaited_once_with(
+            routes._active_repository_context["pull_requests"][0]
+        )
+
+    def test_summarize_pull_request_requires_active_repository(self):
+        response = self.client.post("/api/v1/pull-requests/42/summary")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertIn("No repository has been ingested", response.json()["detail"])
+
+    def test_summarize_pull_request_requires_known_pr_number(self):
+        routes._active_repository = "demo"
+        routes._active_repository_context = {"repository": "demo", "pull_requests": []}
+
+        response = self.client.post("/api/v1/pull-requests/999/summary")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertIn("Pull request #999 was not found", response.json()["detail"])
+
+    def test_summarize_pull_request_reports_generation_failure(self):
+        routes._active_repository = "demo"
+        routes._active_repository_context = {
+            "repository": "demo",
+            "pull_requests": [{"number": 7, "title": "Fix bug", "author": "octocat", "status": "closed", "labels": [], "body": ""}],
+        }
+        analysis_agent = MagicMock()
+        analysis_agent.generate_pr_summary = AsyncMock(side_effect=RuntimeError("Gemini down"))
+        app.dependency_overrides[routes.get_analysis_agent] = lambda: analysis_agent
+
+        response = self.client.post("/api/v1/pull-requests/7/summary")
+
+        self.assertEqual(response.status_code, 502)
+        self.assertIn("Gemini down", response.json()["detail"])
+
 
 if __name__ == "__main__":
     unittest.main()

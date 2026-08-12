@@ -41,6 +41,7 @@ export default function DashboardShell({ children }: DashboardShellProps) {
   const repository = useRepoStore((state) => state.repository);
   const fetchContext = useRepoStore((state) => state.fetchContext);
   const deactivateRepository = useRepoStore((state) => state.deactivateRepository);
+  const pullRequests = useRepoStore((state) => state.pullRequests);
   const pathname = usePathname();
   const router = useRouter();
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -113,11 +114,13 @@ export default function DashboardShell({ children }: DashboardShellProps) {
     );
   }
 
+  const openPrCount = pullRequests.filter((pr) => pr.status === 'open').length;
+
   const navItems: NavItem[] = [
     { name: 'Overview', icon: LayoutDashboard, href: '/' },
     { name: 'Chat', icon: MessageSquare, badge: 'AI', href: '/chat' },
     { name: 'Commits', icon: GitCommit, href: '/commits' },
-    { name: 'Pull Requests', icon: GitPullRequest, badge: 2 },
+    { name: 'Pull Requests', icon: GitPullRequest, badge: openPrCount || undefined, href: '/pull-requests' },
     { name: 'Issues', icon: CircleAlert },
     { name: 'File Explorer', icon: FolderOpen },
   ];

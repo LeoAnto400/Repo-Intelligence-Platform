@@ -409,3 +409,37 @@ class AnalysisAgent(BaseAgent):
             "changes and why, based only on the message and diff above. If the diff is empty, "
             "summarize from the commit message alone and say that no diff was available."
         )
+
+    async def generate_pr_summary(self, pull_request: Dict[str, Any]) -> str:
+        """
+        Generate a short plain-English summary of a single pull request from
+        its title/body/labels (already captured during repository ingestion
+        or the most recent activation, so this needs no additional GitHub
+        calls).
+        """
+        prompt = self._build_pr_summary_prompt(pull_request)
+        raw = self.gemini_service.generate_content(prompt)
+        return raw.strip()
+
+    def _build_pr_summary_prompt(self, pull_request: Dict[str, Any]) -> str:
+        title = pull_request.get("title") or "(no title)"
+        author = pull_request.get("author") or "unknown"
+        status = pull_request.get("status") or "unknown"
+        labels = pull_request.get("labels") or []
+        labels_block = ", ".join(labels) if labels else "(none)"
+        body = (pull_request.get("body") or "").strip()
+        body_block = body if body else "No description was provided for this pull request."
+
+        return (
+            "You are a senior software engineer summarizing a GitHub pull request for a teammate.\n\n"
+            f"Author: {author}\n"
+            f"Status: {status}\n"
+            f"Title: {title}\n"
+            f"Labels: {labels_block}\n\n"
+            "Description:\n"
+            f"{body_block}\n\n"
+            "Write a concise 2-4 sentence plain-English summary of what this pull request "
+            "changes and why, based only on the title, labels, and description above. If the "
+            "description is empty, summarize from the title alone and say that no description "
+            "was available."
+        )

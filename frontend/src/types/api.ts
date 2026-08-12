@@ -45,12 +45,23 @@ export interface CommitSummaryResponse {
 }
 
 export interface PullRequestMetadata {
+  id: number;
   number: number;
   title: string;
-  state: string;
   author: string;
+  status: string;
+  labels: string[];
+  merge_date: string | null;
+  reviewers: string[];
   created_at: string;
+  updated_at: string;
+  body: string;
   [key: string]: unknown;
+}
+
+export interface PullRequestSummaryResponse {
+  number: number;
+  summary: string;
 }
 
 export interface RepositoryMetadata {

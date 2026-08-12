@@ -19,6 +19,7 @@ from src.api.schemas import (
     DeleteRepositoryResponse,
     IngestRequest,
     IngestResponse,
+    PullRequestSummaryResponse,
     QueryRequest,
     QueryResponse,
     RepositoryContextResponse,
@@ -633,6 +634,46 @@ async def summarize_commit(
 
     log.info("Commit summary generated for %s", commit_hash)
     return CommitSummaryResponse(hash=commit_hash, summary=summary)
+
+
+@router.post("/pull-requests/{pr_number}/summary", response_model=PullRequestSummaryResponse)
+async def summarize_pull_request(
+    pr_number: int,
+    analysis_agent: AnalysisAgent = Depends(get_analysis_agent),
+) -> PullRequestSummaryResponse:
+    """Generates an AI summary of a single pull request belonging to the
+    active repository, using the title/body/labels already fetched from
+    GitHub at ingestion or activation time."""
+    summary_id = uuid.uuid4().hex[:8]
+    log = _TaggedLogAdapter(logger, {"tag": f"pr-summary:{summary_id}"})
+
+    context = get_active_repository_context()
+    if not context:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No repository has been ingested yet.",
+        )
+
+    pull_requests = context.get("pull_requests") or []
+    pull_request = next((pr for pr in pull_requests if pr.get("number") == pr_number), None)
+    if pull_request is None:
+        log.error("Pull request not found in active repository: %s", pr_number)
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Pull request #{pr_number} was not found in the active repository's pull requests.",
+        )
+
+    try:
+        summary = await analysis_agent.generate_pr_summary(pull_request)
+    except Exception as e:
+        log.exception("Pull request summary generation failed for #%s", pr_number)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to generate pull request summary: {e}",
+        ) from e
+
+    log.info("Pull request summary generated for #%s", pr_number)
+    return PullRequestSummaryResponse(number=pr_number, summary=summary)
 
 
 @router.post("/query", response_model=QueryResponse)

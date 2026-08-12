@@ -48,6 +48,11 @@ class CommitSummaryResponse(BaseModel):
     hash: str
     summary: str
 
+class PullRequestSummaryResponse(BaseModel):
+    """AI-generated plain-English summary of a single pull request."""
+    number: int
+    summary: str
+
 class RepositoryContextResponse(BaseModel):
     """Repository metadata and source snapshot for the active ingested repository."""
     repository: str
