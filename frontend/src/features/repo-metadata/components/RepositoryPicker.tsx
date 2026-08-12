@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Database, GitBranch, Loader2 } from 'lucide-react';
+import { AlertTriangle, Database, GitBranch, Loader2, RotateCcw } from 'lucide-react';
 import { useRepoStore } from '../store/useRepoStore';
 import type { RepositorySummary } from '@/types/api';
 
@@ -51,7 +51,26 @@ export function RepositoryPicker() {
     );
   }
 
-  if (availableError || availableRepositories.length === 0) {
+  if (availableError) {
+    return (
+      <div className="mx-auto flex w-full max-w-2xl items-center justify-between gap-3 rounded-xl border border-rose-500/20 bg-rose-500/5 px-4 py-3 text-left text-xs text-rose-300">
+        <span className="flex items-center gap-2">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+          Couldn&apos;t check for previously indexed repositories: {availableError}
+        </span>
+        <button
+          type="button"
+          onClick={() => void fetchAvailableRepositories()}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-rose-500/30 px-2.5 py-1.5 font-medium text-rose-200 transition-colors hover:bg-rose-500/10"
+        >
+          <RotateCcw className="h-3.5 w-3.5" />
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  if (availableRepositories.length === 0) {
     return null;
   }
 

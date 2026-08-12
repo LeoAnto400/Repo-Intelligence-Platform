@@ -8,6 +8,7 @@ vi.mock('../services/repository', () => ({
     listRepositories: vi.fn(),
     selectRepository: vi.fn(),
     deleteRepository: vi.fn(),
+    deactivateRepository: vi.fn(),
   },
 }));
 
@@ -84,5 +85,39 @@ describe('useRepoStore.deleteRepository', () => {
 
     await expect(useRepoStore.getState().deleteRepository('demo')).rejects.toThrow('Repository not found');
     expect(useRepoStore.getState().availableRepositories).toHaveLength(2);
+  });
+});
+
+describe('useRepoStore.deactivateRepository', () => {
+  beforeEach(() => {
+    seedState({
+      repository: 'demo',
+      repoUrl: 'https://github.com/example/demo',
+      metadata: { ai_summary: 'A demo repo.' },
+      files: [{ path: 'src/main.py' }],
+      commits: [{ hash: 'abc' } as never],
+    });
+    vi.mocked(repositoryService.deactivateRepository).mockReset();
+  });
+
+  it('clears the active repository fields on success without touching availableRepositories', async () => {
+    vi.mocked(repositoryService.deactivateRepository).mockResolvedValue(undefined);
+
+    await useRepoStore.getState().deactivateRepository();
+
+    const state = useRepoStore.getState();
+    expect(state.repository).toBeNull();
+    expect(state.repoUrl).toBeNull();
+    expect(state.metadata).toBeNull();
+    expect(state.files).toEqual([]);
+    expect(state.commits).toEqual([]);
+    expect(state.availableRepositories).toHaveLength(2);
+  });
+
+  it('leaves the active repository untouched and rethrows when the service call fails', async () => {
+    vi.mocked(repositoryService.deactivateRepository).mockRejectedValue(new Error('Network Error'));
+
+    await expect(useRepoStore.getState().deactivateRepository()).rejects.toThrow('Network Error');
+    expect(useRepoStore.getState().repository).toBe('demo');
   });
 });

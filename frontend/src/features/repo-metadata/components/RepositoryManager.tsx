@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Database, GitBranch, Loader2, RefreshCw, Trash2 } from 'lucide-react';
+import { AlertTriangle, Database, GitBranch, Loader2, RefreshCw, RotateCcw, Trash2 } from 'lucide-react';
 import { useRepoStore } from '../store/useRepoStore';
 import { useIngestStore } from '@/features/ingestion/store/useIngestStore';
 import { Button } from '@/components/ui/button';
@@ -107,7 +107,23 @@ export function RepositoryManager() {
   }
 
   if (availableError) {
-    return <p className="text-sm text-rose-400">{availableError}</p>;
+    return (
+      <div className="flex items-center justify-between gap-3 rounded-xl border border-rose-500/20 bg-rose-500/5 px-4 py-3 text-sm text-rose-300">
+        <span className="flex items-center gap-2">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          {availableError}
+        </span>
+        <Button
+          size="sm"
+          variant="outline"
+          className="shrink-0 gap-1.5 border-rose-500/30 text-rose-200 hover:bg-rose-500/10"
+          onClick={() => void fetchAvailableRepositories()}
+        >
+          <RotateCcw className="h-3.5 w-3.5" />
+          Retry
+        </Button>
+      </div>
+    );
   }
 
   if (availableRepositories.length === 0) {

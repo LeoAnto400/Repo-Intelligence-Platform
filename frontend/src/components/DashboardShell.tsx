@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard,
@@ -11,6 +11,8 @@ import {
   GitPullRequest,
   CircleAlert,
   FolderOpen,
+  Loader2,
+  LogOut,
   Menu,
   X,
   PanelLeftClose,
@@ -38,9 +40,13 @@ import { useRepoStore } from '@/features/repo-metadata/store/useRepoStore';
 export default function DashboardShell({ children }: DashboardShellProps) {
   const repository = useRepoStore((state) => state.repository);
   const fetchContext = useRepoStore((state) => state.fetchContext);
+  const deactivateRepository = useRepoStore((state) => state.deactivateRepository);
   const pathname = usePathname();
+  const router = useRouter();
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isMobileOpen, setIsMobileOpen] = useState(false);
+  const [isSwitching, setIsSwitching] = useState(false);
+  const [switchError, setSwitchError] = useState('');
 
   // Bootstraps active-repository state once per app load, regardless of which
   // route is entered first (deep-linking to /chat must see it too).
@@ -48,6 +54,22 @@ export default function DashboardShell({ children }: DashboardShellProps) {
     void fetchContext();
   }, [fetchContext]);
   const [activeItem, setActiveItem] = useState('Overview');
+
+  // Leaves the active repository (without deleting it) so the ingest/picker
+  // landing page is reachable again without restarting the backend, which
+  // was previously the only way to clear the server's active-repo pointer.
+  const handleSwitchRepository = async () => {
+    setSwitchError('');
+    setIsSwitching(true);
+    try {
+      await deactivateRepository();
+      router.push('/');
+    } catch (err) {
+      setSwitchError(err instanceof Error ? err.message : 'Failed to switch repository.');
+    } finally {
+      setIsSwitching(false);
+    }
+  };
 
   if (!repository) {
     return (
@@ -261,6 +283,27 @@ export default function DashboardShell({ children }: DashboardShellProps) {
               </div>
             )}
           </div>
+
+          <Button
+            variant="outline"
+            disabled={isSwitching}
+            onClick={handleSwitchRepository}
+            title="Switch repository"
+            className={cn(
+              "w-full gap-2 border-zinc-800 text-zinc-400 hover:border-indigo-500/40 hover:bg-zinc-900 hover:text-zinc-100",
+              isCollapsed && "px-0"
+            )}
+          >
+            {isSwitching ? (
+              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+            ) : (
+              <LogOut className="h-3.5 w-3.5 shrink-0" />
+            )}
+            {!isCollapsed && <span className="text-xs">Switch Repository</span>}
+          </Button>
+          {!isCollapsed && switchError && (
+            <p className="text-[11px] text-rose-400">{switchError}</p>
+          )}
         </div>
       </motion.aside>
 

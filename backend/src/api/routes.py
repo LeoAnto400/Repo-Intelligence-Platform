@@ -454,6 +454,18 @@ async def get_repository_context() -> RepositoryContextResponse:
     return RepositoryContextResponse(**context)
 
 
+@router.post("/repository/deactivate", status_code=status.HTTP_204_NO_CONTENT)
+async def deactivate_repository() -> None:
+    """Clears the currently active repository so the frontend can return to
+    the ingest/picker landing page without losing any indexed data — the
+    repository stays fully ingested in ChromaDB and can be reactivated later
+    via /repositories/{repository}/select. This only clears the server's
+    single active-repository pointer, previously only resettable by
+    restarting the whole backend process."""
+    set_active_repository(None)
+    set_active_repository_context(None)
+
+
 @router.get("/repositories", response_model=List[RepositorySummary])
 async def list_repositories(
     vector_store: VectorStoreManager = Depends(get_vector_store),

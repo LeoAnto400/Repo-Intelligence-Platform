@@ -37,6 +37,15 @@ export class RepositoryService extends BaseService {
   }
 
   /**
+   * Clears the active repository so the app returns to the ingest/picker
+   * landing page. Doesn't delete anything — the repository stays indexed
+   * and can be reactivated later.
+   */
+  public async deactivateRepository(): Promise<void> {
+    await this.post<void>('/repository/deactivate');
+  }
+
+  /**
    * Deletes a previously ingested repository's vector collection.
    */
   public async deleteRepository(repository: string): Promise<DeleteRepositoryResponse> {
