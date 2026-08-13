@@ -12,44 +12,38 @@ The project consists of three specialized agents that coordinate to answer user 
 
 ## Project Structure
 
-```
-src/
-├── agents/          # Multi-agent implementations (base interfaces, retrieval, analysis, orchestrator)
-├── api/             # FastAPI application, route handlers, and Pydantic schemas
-├── core/            # Configuration management (Pydantic Settings)
-├── db/              # Vector database interface (ChromaDB wrapper)
-└── services/        # Integration services (Gemini API, GitHub file ingestion)
-```
+`	ext
+backend/
++-- src/agents/       # Multi-agent implementations
++-- src/api/          # FastAPI application and routes
++-- src/core/         # Configuration management
++-- src/db/           # ChromaDB wrapper
++-- src/services/     # Gemini and GitHub integrations
+frontend/            # Next.js user interface
+` 
 
-## Setup & Running
+## Setup and running
 
-1. **Environment Variables**:
-   Copy `.env.example` to `.env` and fill in your details:
-   ```bash
-   cp .env.example .env
-   ```
+1. Create "backend/.env" and set the required Gemini and GitHub credentials.
+2. Install backend dependencies:
 
-2. **Installation**:
-   ```bash
-   pip install -r requirements.txt
-   ```
+`powershell
+pip install -r requirements.txt
+` 
 
-3. **Running the Application**:
-   ```bash
-   python main.py
-   ```
-   Or run directly with uvicorn:
-   ```bash
-uvicorn src.api.main:app --reload
-   ```
+3. In one terminal, start the backend from its directory:
 
-   Current Status
+`powershell
+cd backend
+python -m uvicorn src.api.main:app --reload --reload-dir src --host 0.0.0.0 --port 8000
+` 
 
-✅ Project structure
-⬜ Repository ingestion
-⬜ Chunking
-⬜ Embeddings
-⬜ ChromaDB
-⬜ Retrieval
-⬜ Analysis Agent
-⬜ LangGraph
+4. In a second terminal, start the frontend:
+
+`powershell
+cd frontend
+npm install
+npm run dev
+` 
+
+Open the frontend at "http://localhost:3000". The frontend calls the FastAPI backend directly (not through a Next.js rewrite - `next dev`'s rewrite proxy has a hardcoded ~20s timeout that would kill any real repository ingestion), resolving the backend host from whichever host the page was loaded from, so this also works when opened via the configured LAN address.

@@ -17,6 +17,9 @@ chroma_db/
 # Temporary cloned repositories
 .temp_clones/
 
+# Persisted per-repository commit history
+repo_commits/
+
 # VS Code
 .vscode/
 
@@ -36,3 +39,7 @@ chroma_db/
 
 # Environment
 .env
+.claude
+start-app.bat
+
+interview-prep/
