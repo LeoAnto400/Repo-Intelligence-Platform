@@ -23,6 +23,37 @@ class TestApi(unittest.TestCase):
         routes._active_repository_context = None
         routes._ingest_rate_limiter.reset()
         routes._query_rate_limiter.reset()
+
+        # Default mocks for every external/AI service dependency. Several
+        # route handlers construct these (e.g. get_analysis_agent() builds a
+        # real GeminiService internally, bypassing dependency_overrides on
+        # get_gemini_service alone) even for tests that only care about
+        # unrelated behavior, so without these defaults those tests would
+        # require a real GEMINI_API_KEY and hit the network. Tests that
+        # exercise Gemini/analysis behavior directly override the relevant
+        # dependency, which simply replaces these defaults.
+        self.mock_github_service = MagicMock()
+        self.mock_chunker = MagicMock()
+        self.mock_gemini_service = MagicMock()
+        self.mock_vector_store = MagicMock()
+        self.mock_retrieval_agent = MagicMock()
+        self.mock_analysis_agent = MagicMock()
+        self.mock_analysis_agent.generate_repository_overview = AsyncMock(return_value={})
+        self.mock_analysis_agent.generate_commit_summary = AsyncMock(return_value="")
+        self.mock_analysis_agent.generate_pr_summary = AsyncMock(return_value="")
+        self.mock_orchestrator = MagicMock()
+        self.mock_orchestrator.process = AsyncMock(return_value=OrchestratorResult(
+            answer="", source_files=[], retrieved_chunks=0,
+        ))
+
+        app.dependency_overrides[routes.get_github_service] = lambda: self.mock_github_service
+        app.dependency_overrides[routes.get_chunker] = lambda: self.mock_chunker
+        app.dependency_overrides[routes.get_gemini_service] = lambda: self.mock_gemini_service
+        app.dependency_overrides[routes.get_vector_store] = lambda: self.mock_vector_store
+        app.dependency_overrides[routes.get_retrieval_agent] = lambda: self.mock_retrieval_agent
+        app.dependency_overrides[routes.get_analysis_agent] = lambda: self.mock_analysis_agent
+        app.dependency_overrides[routes.get_orchestrator] = lambda: self.mock_orchestrator
+
         self.client = TestClient(app)
 
     def tearDown(self):
